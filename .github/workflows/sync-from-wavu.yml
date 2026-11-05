@@ -1,0 +1,50 @@
+# Keeps this template repository identical to `wavu new-script` from the
+# latest Wavu release. Runs only in the template repository itself, never in
+# repositories created from it. (GITHUB_TOKEN may not change workflow files,
+# so .github/ is left alone here; update release.yml by hand if Wavu changes it.)
+name: sync-from-wavu
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.repository == 'Oxford-Zeiss-Centre-of-Excellence/Wavu-Script-Template'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: template
+      - name: Latest Wavu release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "tag=$(gh release view -R Oxford-Zeiss-Centre-of-Excellence/Wavu --json tagName -q .tagName)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: Oxford-Zeiss-Centre-of-Excellence/Wavu
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+          path: wavu
+      - uses: prefix-dev/setup-pixi@v0.11.3
+        with:
+          pixi-version: v0.78.0
+          manifest-path: wavu/pixi.toml
+      - name: Regenerate with wavu new-script
+        run: |
+          pixi run --manifest-path wavu/pixi.toml wavu new-script wavu-script --dest out --wavu-source git
+          rsync -a --delete --exclude .git --exclude .github out/wavu-script/ template/
+      - name: Commit if changed
+        working-directory: template
+        run: |
+          git add -A
+          if git diff --cached --quiet; then echo "up to date"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: sync with Wavu ${{ steps.tag.outputs.tag }}"
+          git push
